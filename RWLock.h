@@ -19,6 +19,8 @@
 
 class ATMRGuard;     // 读者护盾
 class ATMWGuard;     // 写者护盾
+class ATMRTRGuard;   // 读者临时释放守卫
+class ATMWTRGuard;   // 写者临时释放守卫
 
 class RWLock    /// 多读者多写者锁
 {
@@ -30,9 +32,11 @@ class RWLock    /// 多读者多写者锁
         RWLock( RWLock && other) = delete;
         RWLock &operator=( RWLock && other) = delete;
 
-        // 让下面两个类访问 私有成员
+        // 让操作类能够访问私有成员
         friend ATMRGuard;
         friend ATMWGuard;
+        friend ATMRTRGuard;
+        friend ATMWTRGuard;
     protected:
     private:
 
@@ -57,7 +61,7 @@ class RWLock    /// 多读者多写者锁
 
 // Peterson 算法
 
-class ATMRGuard     // 读者护盾
+class ATMRGuard     // 读者守卫
 {
     public:
 
@@ -87,6 +91,7 @@ class ATMRGuard     // 读者护盾
             --RWL.ATMNumReader;
             RWL.ATMStopWriter = false;  // 允许写者
         }
+
         ATMRGuard( ATMRGuard const & other) = delete;
         ATMRGuard &operator=( ATMRGuard const & other) = delete;
         ATMRGuard( ATMRGuard && other) = delete;
@@ -97,15 +102,15 @@ class ATMRGuard     // 读者护盾
 };
 
 
-class ATMWGuard     // 读者护盾
+class ATMWGuard     // 写者守卫
 {
     public:
 
         inline
         ATMWGuard( RWLock &rwLock) : RWL(rwLock)
         {
-            RWL.ATMStopReader = true;   // 禁止写者
-            RWL.TurnR = true;   // 送给写者
+            RWL.ATMStopReader = true;   // 禁止读者
+            RWL.TurnR = true;   // 送给读者
             while ( ( RWL.ATMStopWriter == true ||  0 != RWL.ATMNumReader )  && RWL.TurnR == true  )
             {
                 // Wait
@@ -129,12 +134,100 @@ class ATMWGuard     // 读者护盾
             }
 
             --RWL.ATMNumWriter;
-            RWL.ATMStopReader = false;  // 允许写者
+            RWL.ATMStopReader = false;  // 允许读者
         }
+
         ATMWGuard( ATMWGuard const & other) = delete;
         ATMWGuard &operator=( ATMWGuard const & other) = delete;
         ATMWGuard( ATMWGuard && other) = delete;
         ATMWGuard &operator=( ATMWGuard && other) = delete;
+    protected:
+    private:
+        RWLock &RWL;
+};
+
+
+// 临时释放守卫   和加锁守卫操作正好相反
+// 性质也相反    产生一个无守卫空窗
+// Temporarily Released
+
+class ATMRTRGuard   // 读者临时释放守卫
+{
+    public:
+
+        inline
+        ATMRTRGuard( RWLock &rwLock) : RWL(rwLock)
+        {
+            --RWL.ATMNumReader;
+            RWL.ATMStopWriter = false;  // 允许写者
+            return;
+        }
+
+        inline
+        ~ATMRTRGuard()
+        {
+            RWL.ATMStopWriter = true;   // 禁止写者
+            RWL.TurnR = false;   // 送给写者
+            while ( ( RWL.ATMStopReader == true ||  0 != RWL.ATMNumWriter )  && RWL.TurnR == false  )
+            {
+                // Wait
+                std::this_thread::sleep_for (std::chrono::milliseconds(1));
+            }
+
+            ++RWL.ATMNumReader;
+            return;
+        }
+
+        ATMRTRGuard( ATMRTRGuard const & other) = delete;
+        ATMRTRGuard &operator=( ATMRTRGuard const & other) = delete;
+        ATMRTRGuard( ATMRTRGuard && other) = delete;
+        ATMRTRGuard &operator=( ATMRTRGuard && other) = delete;
+    protected:
+    private:
+        RWLock &RWL;
+};
+
+
+class ATMWTRGuard   // 写者临时释放守卫
+{
+    public:
+
+        inline
+        ATMWTRGuard( RWLock &rwLock) : RWL(rwLock)
+        {
+            if (RWL.LockWriter)
+            {
+                RWL.MTXWriter.unlock();
+            }
+
+            --RWL.ATMNumWriter;
+            RWL.ATMStopReader = false;  // 允许读者
+            return;
+        }
+
+        inline
+        ~ATMWTRGuard()
+        {
+            RWL.ATMStopReader = true;   // 禁止读者
+            RWL.TurnR = true;   // 送给读者
+            while ( ( RWL.ATMStopWriter == true ||  0 != RWL.ATMNumReader )  && RWL.TurnR == true  )
+            {
+                // Wait
+                std::this_thread::sleep_for (std::chrono::milliseconds(1));
+            }
+            ++RWL.ATMNumWriter;
+
+            if (RWL.LockWriter)
+            {
+                RWL.MTXWriter.lock();
+            }
+            return;
+        }
+
+        ATMWTRGuard( ATMWTRGuard const & other) = delete;
+        ATMWTRGuard &operator=( ATMWTRGuard const & other) = delete;
+        ATMWTRGuard( ATMWTRGuard && other) = delete;
+        ATMWTRGuard &operator=( ATMWTRGuard && other) = delete;
     protected:
     private:
         RWLock &RWL;
