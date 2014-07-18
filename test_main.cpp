@@ -27,32 +27,21 @@ void t2()
 {
     for ( int i = 0; i != 100; ++i)
     {
-//        bool t = false;
         {
             ATMRGuard a(rwl);
             if (!tv.empty())
             {
-//                t = true;
-                int n = tv.back();
-                if ( n < 100 )
-                {
-                    lock_guard<mutex> m(mtx);
-                    cout << n << "\t";
-                }
-                else
-                {
-                    lock_guard<mutex> m(mtx);
-                    cout << "*" << "\t";
-                }
+                lock_guard<mutex> m(mtx);
+                cout << tv.back() << "\t";
             }
         }
-//        {
-//            ATMWGuard a(rwl);
-//            if (t)
-//            {
-//                tv.pop_front();
-//            }
-//        }
+        {
+            ATMWGuard a(rwl);
+            if (!tv.empty())
+            {
+                tv.pop_front();
+            }
+        }
     }
     return;
 }
@@ -69,10 +58,10 @@ int main()
         a.join();
     }
     cout << endl;
-    for ( int &a : tv )
-    {
-        cout << a << "\t";
-    }
+//    for ( int &a : tv )
+//    {
+//        cout << a << "\t";
+//    }
     return 0;
 }
 
