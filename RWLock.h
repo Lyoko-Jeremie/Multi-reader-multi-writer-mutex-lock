@@ -55,6 +55,8 @@ class RWLock    /// 多读者多写者锁
         std::atomic_long ATMNumWriter;
         // 写者 互斥锁
         std::mutex MTXWriter;
+        // 保护信号量    去除隐藏的判断时被打断问题
+        std::mutex MTXATM;
         // Peterson 死锁谦让保护
         std::atomic_bool TurnR;  // true 读者先入       false 写者先入
 };
@@ -68,26 +70,36 @@ class ATMRGuard     // 读者守卫
         inline
         ATMRGuard( RWLock &rwLock) : RWL(rwLock)
         {
-            RWL.ATMStopWriter = true;   // 禁止写者
-            RWL.TurnR = false;   // 送给写者
-            while ( ( RWL.ATMStopReader == true ||  0 != RWL.ATMNumWriter )  && RWL.TurnR == false  )
             {
+                std::lock_guard<std::mutex> lg(RWL.MTXATM);
+                // guard
+                RWL.ATMStopWriter = true;   // 禁止写者
+                RWL.TurnR = false;   // 送给写者
+            }
+            while ( true )
+            {
+                {
+                    std::lock_guard<std::mutex> lg(RWL.MTXATM);
+                    // guard
+                    if ( !(          ( RWL.ATMStopReader == true && RWL.TurnR == false )        ||       ( 0 != RWL.ATMNumWriter )               ) )
+                        // 用了"!"非 所以中间是循环条件
+                    {
+                        ++RWL.ATMNumReader;
+                        break;      // 跳出循环
+                    }
+                }
                 // Wait
 //                std::this_thread::sleep_for (std::chrono::microseconds(1));
                 std::this_thread::sleep_for (std::chrono::milliseconds(1));
             }
-            // 进入条件 :
-            // RWL.ATMStopReader == false   RWL.ATMNumWriter == 0   RWL.TurnR == true
-            // 不进入条件 :
-            // ( RWL.ATMStopReader == true || RWL.ATMNumWriter != 0 )
-            // ( RWL.ATMStopReader == false  &&  RWL.ATMNumWriter == 0 )   RWL.TurnR == false
-            ++RWL.ATMNumReader;
             return;
         }
 
         inline
         ~ATMRGuard()
         {
+            std::lock_guard<std::mutex> lg(RWL.MTXATM);
+            // guard
             --RWL.ATMNumReader;
             RWL.ATMStopWriter = false;  // 允许写者
         }
@@ -109,14 +121,28 @@ class ATMWGuard     // 写者守卫
         inline
         ATMWGuard( RWLock &rwLock) : RWL(rwLock)
         {
-            RWL.ATMStopReader = true;   // 禁止读者
-            RWL.TurnR = true;   // 送给读者
-            while ( ( RWL.ATMStopWriter == true ||  0 != RWL.ATMNumReader )  && RWL.TurnR == true  )
             {
+                std::lock_guard<std::mutex> lg(RWL.MTXATM);
+                // guard
+                RWL.ATMStopReader = true;   // 禁止读者
+                RWL.TurnR = true;   // 送给读者
+            }
+            while ( true  )
+            {
+                {
+                    std::lock_guard<std::mutex> lg(RWL.MTXATM);
+                    // guard
+                    if ( !(          ( RWL.ATMStopWriter == true && RWL.TurnR == true )        ||       ( 0 != RWL.ATMNumReader )               ) )
+                        // 用了"!"非 所以中间是循环条件
+                    {
+                        ++RWL.ATMNumWriter;
+                        break;      // 跳出循环
+                    }
+                }
                 // Wait
                 std::this_thread::sleep_for (std::chrono::milliseconds(1));
             }
-            ++RWL.ATMNumWriter;
+//            ++RWL.ATMNumWriter;
 
             if (RWL.LockWriter)
             {
@@ -133,6 +159,8 @@ class ATMWGuard     // 写者守卫
                 RWL.MTXWriter.unlock();
             }
 
+            std::lock_guard<std::mutex> lg(RWL.MTXATM);
+            // guard
             --RWL.ATMNumWriter;
             RWL.ATMStopReader = false;  // 允许读者
         }
@@ -158,6 +186,7 @@ class ATMRTRGuard   // 读者临时释放守卫
         inline
         ATMRTRGuard( RWLock &rwLock) : RWL(rwLock)
         {
+            std::lock_guard<std::mutex> lg(RWL.MTXATM);
             --RWL.ATMNumReader;
             RWL.ATMStopWriter = false;  // 允许写者
             return;
@@ -166,15 +195,28 @@ class ATMRTRGuard   // 读者临时释放守卫
         inline
         ~ATMRTRGuard()
         {
-            RWL.ATMStopWriter = true;   // 禁止写者
-            RWL.TurnR = false;   // 送给写者
-            while ( ( RWL.ATMStopReader == true ||  0 != RWL.ATMNumWriter )  && RWL.TurnR == false  )
             {
+                std::lock_guard<std::mutex> lg(RWL.MTXATM);
+                // guard
+                RWL.ATMStopWriter = true;   // 禁止写者
+                RWL.TurnR = false;   // 送给写者
+            }
+            while ( true )
+            {
+                {
+                    std::lock_guard<std::mutex> lg(RWL.MTXATM);
+                    // guard
+                    if ( !(          ( RWL.ATMStopReader == true && RWL.TurnR == false )        ||       ( 0 != RWL.ATMNumWriter )               ) )
+                        // 用了"!"非 所以中间是循环条件
+                    {
+                        ++RWL.ATMNumReader;
+                        break;      // 跳出循环
+                    }
+                }
                 // Wait
+//                std::this_thread::sleep_for (std::chrono::microseconds(1));
                 std::this_thread::sleep_for (std::chrono::milliseconds(1));
             }
-
-            ++RWL.ATMNumReader;
             return;
         }
 
@@ -200,6 +242,7 @@ class ATMWTRGuard   // 写者临时释放守卫
                 RWL.MTXWriter.unlock();
             }
 
+            std::lock_guard<std::mutex> lg(RWL.MTXATM);
             --RWL.ATMNumWriter;
             RWL.ATMStopReader = false;  // 允许读者
             return;
@@ -208,14 +251,28 @@ class ATMWTRGuard   // 写者临时释放守卫
         inline
         ~ATMWTRGuard()
         {
-            RWL.ATMStopReader = true;   // 禁止读者
-            RWL.TurnR = true;   // 送给读者
-            while ( ( RWL.ATMStopWriter == true ||  0 != RWL.ATMNumReader )  && RWL.TurnR == true  )
             {
+                std::lock_guard<std::mutex> lg(RWL.MTXATM);
+                // guard
+                RWL.ATMStopReader = true;   // 禁止读者
+                RWL.TurnR = true;   // 送给读者
+            }
+            while ( true  )
+            {
+                {
+                    std::lock_guard<std::mutex> lg(RWL.MTXATM);
+                    // guard
+                    if ( !(          ( RWL.ATMStopWriter == true && RWL.TurnR == true )        ||       ( 0 != RWL.ATMNumReader )               ) )
+                        // 用了"!"非 所以中间是循环条件
+                    {
+                        ++RWL.ATMNumWriter;
+                        break;      // 跳出循环
+                    }
+                }
                 // Wait
                 std::this_thread::sleep_for (std::chrono::milliseconds(1));
             }
-            ++RWL.ATMNumWriter;
+//            ++RWL.ATMNumWriter;
 
             if (RWL.LockWriter)
             {
